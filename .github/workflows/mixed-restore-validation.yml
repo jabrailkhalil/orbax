@@ -30,6 +30,8 @@ jobs:
             revision: baseline
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -40,6 +42,13 @@ jobs:
           else
             pip install -e ./checkpoint 'jax==${{ matrix.jax }}' 'jaxlib==${{ matrix.jax }}' pytest pytest-xdist mock chex flax portpicker tensorboard
           fi
+      - name: Run mixed regression separately on the fixed implementation
+        if: matrix.revision == 'fixed'
+        env:
+          TEST_LOGDIR: mixed-regression-logs
+        run: |
+          cd checkpoint
+          python ../validation/run_distributed_tests.py orbax/checkpoint/_src/serialization/type_handlers_test.py -k test_mixed_restore_args
       - name: Run all type-handler tests with two CPU processes
         env:
           TEST_LOGDIR: type-handler-logs
@@ -56,6 +65,13 @@ jobs:
         run: |
           cd checkpoint
           python ../validation/run_distributed_tests.py orbax/checkpoint/_src/handlers/pytree_checkpoint_handler_test.py orbax/checkpoint/_src/handlers/array_checkpoint_handler_test.py orbax/checkpoint/_src/handlers/standard_checkpoint_handler_test.py
+      - name: Confirm pre-existing integer broadcast behavior
+        if: always() && matrix.revision == 'baseline' && matrix.jax == '0.11.2'
+        env:
+          TEST_LOGDIR: integer-control-logs
+        run: |
+          cd checkpoint
+          python ../validation/run_distributed_tests.py ../validation/narrow_integer_control_test.py -k test_int32_broadcast_control
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -83,9 +99,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
       - name: Run repository pre-commit hooks
         run: |
           pip install pre-commit pytype==2024.10.11
