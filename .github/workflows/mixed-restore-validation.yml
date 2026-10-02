@@ -9,24 +9,71 @@ permissions:
   contents: read
 
 jobs:
-  distributed-regression:
+  distributed-suites:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.12'
+            jax: '0.11.2'
+          - python: '3.11'
+            jax: '0.6.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install checkpoint test dependencies
+        run: |
+          if [[ '${{ matrix.jax }}' == '0.6.0' ]]; then
+            pip install -e ./checkpoint 'jax==0.6.0' 'jaxlib==0.6.0' 'flax==0.10.6' 'chex==0.1.89' 'optax==0.2.4' pytest pytest-xdist mock portpicker tensorboard
+          else
+            pip install -e ./checkpoint 'jax==${{ matrix.jax }}' 'jaxlib==${{ matrix.jax }}' pytest pytest-xdist mock chex flax portpicker tensorboard
+          fi
+      - name: Run all type-handler tests with two CPU processes
+        env:
+          TEST_LOGDIR: type-handler-logs
+        run: |
+          python validation/run_distributed_tests.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py
+      - name: Run checkpoint-handler integration tests with two CPU processes
+        if: always()
+        env:
+          TEST_LOGDIR: checkpoint-handler-logs
+        run: |
+          python validation/run_distributed_tests.py checkpoint/orbax/checkpoint/_src/handlers/pytree_checkpoint_handler_test.py checkpoint/orbax/checkpoint/_src/handlers/array_checkpoint_handler_test.py checkpoint/orbax/checkpoint/_src/handlers/standard_checkpoint_handler_test.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: distributed-logs-${{ matrix.jax }}
+          path: '*-logs'
+  checkpoint-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install checkpoint test dependencies
+      - name: Install checkpoint suite dependencies
         run: |
-          pip install -e ./checkpoint 'jax==0.11.2' 'jaxlib==0.11.2' pytest pytest-xdist mock chex flax portpicker tensorboard
-      - name: Reproduce mixed restore regression with two CPU processes
-        env:
-          TEST_LOGDIR: baseline-logs
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e './checkpoint[testing,tiering_service]' portpicker tensorboard 'jax==0.11.2' 'jaxlib==0.11.2'
+          cd checkpoint
+          python -m grpc_tools.protoc -I=. --python_out=. --grpc_python_out=. $(find orbax/checkpoint/ -name '*.proto')
+      - name: Run upstream single-host checkpoint suite
         run: |
-          python validation/run_distributed_tests.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py -k test_mixed_restore_args
-      - uses: actions/upload-artifact@v4
-        if: always()
+          python validation/run_checkpoint_suite.py
+  style-and-types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          name: distributed-regression-logs
-          path: baseline-logs
+          python-version: '3.12'
+      - name: Run repository pre-commit hooks
+        run: |
+          pip install pre-commit
+          pre-commit run --files checkpoint/orbax/checkpoint/_src/serialization/jax_array_handlers.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py
