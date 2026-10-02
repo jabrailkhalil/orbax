@@ -48,7 +48,6 @@ from orbax.checkpoint._src.serialization import types
 from orbax.checkpoint._src.sharding_utils import make_single_device_sharding
 from orbax.checkpoint._src.testing import multiprocess_test
 from orbax.checkpoint._src.tree import utils as tree_utils
-
 import tensorstore as ts
 
 mock = unittest.mock
@@ -915,6 +914,38 @@ class PlaceholderHandlerTest(
     self.assertListEqual(restored, values)
 
 
+class SingleReplicaArrayHandlerArgsTest(
+    unittest.IsolatedAsyncioTestCase, parameterized.TestCase
+):
+
+  @parameterized.named_parameters(
+      ('missing', None, 'Must provide ArrayRestoreArgs'),
+      ('empty', [], 'mismatched lengths'),
+      (
+          'mismatched',
+          [ArrayRestoreArgs(), ArrayRestoreArgs()],
+          'mismatched lengths',
+      ),
+      ('unsupported', [types.RestoreArgs()], 'Must provide `ArrayRestoreArgs`'),
+      (
+          'single_replica_without_sharding',
+          [SingleReplicaArrayRestoreArgs()],
+          'Must provide `sharding`',
+      ),
+  )
+  async def test_invalid_args(self, args, message):
+    handler = type_handlers.SingleReplicaArrayHandler()
+    with self.assertRaisesRegex(ValueError, message):
+      await handler.deserialize(
+          [ParamInfo(name='array', parent_dir=epath.Path('.'))], args
+      )
+
+  async def test_empty_batch(self):
+    handler = type_handlers.SingleReplicaArrayHandler()
+    with self.assertRaisesRegex(ValueError, 'input of length 0'):
+      await handler.deserialize([], [])
+
+
 @dataclasses.dataclass
 class SingleReplicaTestConfig:
   mesh: jax.sharding.Mesh
@@ -936,6 +967,16 @@ class SingleReplicaTestConfig:
     return [
         test_utils.create_sharded_array(arr, self.mesh, pspec)
         for arr, pspec in zip(self.np_arrays, self.partition_specs)
+    ]
+
+  def restore_args(self, arrays: list[jax.Array]) -> list[ArrayRestoreArgs]:
+    return [
+        ArrayRestoreArgs(sharding=arr.sharding, global_shape=arr.shape)
+        if i in self.standard_array_indices
+        else test_utils.create_single_replica_restore_args(
+            arr, self.mesh, axes
+        )
+        for i, (arr, axes) in enumerate(zip(arrays, self.partition_specs))
     ]
 
 
@@ -1083,16 +1124,7 @@ class SingleReplicaArrayHandlerTest(
         )
       test_utils.sync_global_processes('merge_ocdbt_complete')
 
-    restore_args = [
-        ArrayRestoreArgs(sharding=arr.sharding, global_shape=arr.shape)
-        if i in config.standard_array_indices
-        else test_utils.create_single_replica_restore_args(
-            arr,
-            mesh,
-            axes,
-        )
-        for i, (arr, axes) in enumerate(zip(arrays, mesh_axes))
-    ]
+    restore_args = config.restore_args(arrays)
     num_replicas = mesh.devices.shape[replica_axis_index]
     with mock.patch.object(
         multislice, 'slice_count', return_value=num_replicas
