@@ -1062,7 +1062,6 @@ class SingleReplicaArrayHandlerTest(
     """Test single replica serialize and deserialize."""
     arrays = config.arrays
     mesh = config.mesh
-    mesh_axes = config.partition_specs
     replica_axis_index = config.replica_axis_index
     primary_replica_id = config.primary_replica_id
     is_ocdbt = config.is_ocdbt
@@ -1199,9 +1198,9 @@ class SingleReplicaArrayHandlerTest(
         np.asarray(jax.devices()).reshape(2, 4), ('x', 'y')
     )
     arrays = [
-        np.arange(64, dtype=np.int32).reshape(8, 8),
+        np.arange(64, dtype=np.int64).reshape(8, 8),
         np.arange(128, dtype=np.float32).reshape(16, 8) * 2,
-        np.arange(128, dtype=np.int16).reshape(8, 16) * 3,
+        np.arange(128, dtype=np.float32).reshape(8, 16) * 3,
         np.arange(256, dtype=np.float64).reshape(16, 16) * 4,
     ]
     mesh_axes = [

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections.abc
 import dataclasses
 import functools
 import os
@@ -1937,9 +1938,9 @@ class SingleReplicaArrayHandler(ArrayHandler):
 
   async def deserialize(
       self,
-      infos: Sequence[types.ParamInfo],
-      args: Sequence[types.RestoreArgs] | None = None,
-  ) -> Sequence[jax.Array]:
+      infos: collections.abc.Sequence[types.ParamInfo],
+      args: collections.abc.Sequence[types.RestoreArgs] | None = None,
+  ) -> collections.abc.Sequence[jax.Array]:
     """Restores arrays, optionally broadcasting from a single replica.
 
     Args:
@@ -2004,9 +2005,9 @@ class SingleReplicaArrayHandler(ArrayHandler):
 
   async def _deserialize_single_replica(
       self,
-      infos: Sequence[types.ParamInfo],
-      args: Sequence[SingleReplicaArrayRestoreArgs],
-  ) -> Sequence[jax.Array]:
+      infos: collections.abc.Sequence[types.ParamInfo],
+      args: collections.abc.Sequence[SingleReplicaArrayRestoreArgs],
+  ) -> collections.abc.Sequence[jax.Array]:
     """Restores and broadcasts a nonempty batch of single-replica arguments."""
 
     # arg.single_replica_sharding is not required to be passed.
