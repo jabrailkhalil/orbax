@@ -928,6 +928,7 @@ class SingleReplicaTestConfig:
   enable_write_sharding_file: bool = True
   array_metadata_store: array_metadata_store_lib.Store | None = None
   active_mesh_on_restore: bool = False
+  standard_array_indices: tuple[int, ...] = ()
 
   @property
   def arrays(self) -> list[jax.Array]:
@@ -1083,12 +1084,14 @@ class SingleReplicaArrayHandlerTest(
       test_utils.sync_global_processes('merge_ocdbt_complete')
 
     restore_args = [
-        test_utils.create_single_replica_restore_args(
+        ArrayRestoreArgs(sharding=arr.sharding, global_shape=arr.shape)
+        if i in config.standard_array_indices
+        else test_utils.create_single_replica_restore_args(
             arr,
             mesh,
             axes,
         )
-        for arr, axes in zip(arrays, mesh_axes)
+        for i, (arr, axes) in enumerate(zip(arrays, mesh_axes))
     ]
     num_replicas = mesh.devices.shape[replica_axis_index]
     with mock.patch.object(
@@ -1149,6 +1152,39 @@ class SingleReplicaArrayHandlerTest(
         partition_specs=mesh_axes,
         is_ocdbt=False,
         use_replica_parallel=use_replica_parallel,
+    )
+    await self.single_replica_serialize_deserialize(config)
+
+  @parameterized.product(
+      standard_array_indices=((0, 2), (1, 3), (0, 1, 2, 3)),
+      primary_replica_id=(0, 1),
+      is_ocdbt=(True, False),
+  )
+  async def test_mixed_restore_args(
+      self, standard_array_indices, primary_replica_id, is_ocdbt
+  ):
+    mesh = jax.sharding.Mesh(
+        np.asarray(jax.devices()).reshape(2, 4), ('x', 'y')
+    )
+    arrays = [
+        np.arange(64, dtype=np.int32).reshape(8, 8),
+        np.arange(128, dtype=np.float32).reshape(16, 8) * 2,
+        np.arange(128, dtype=np.int16).reshape(8, 16) * 3,
+        np.arange(256, dtype=np.float64).reshape(16, 16) * 4,
+    ]
+    mesh_axes = [
+        jax.sharding.PartitionSpec('x', 'y')
+        if i in standard_array_indices
+        else jax.sharding.PartitionSpec(None, 'y')
+        for i in range(len(arrays))
+    ]
+    config = SingleReplicaTestConfig(
+        mesh=mesh,
+        np_arrays=arrays,
+        partition_specs=mesh_axes,
+        primary_replica_id=primary_replica_id,
+        is_ocdbt=is_ocdbt,
+        standard_array_indices=standard_array_indices,
     )
     await self.single_replica_serialize_deserialize(config)
 
