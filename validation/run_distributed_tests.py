@@ -1,6 +1,7 @@
 """Run Orbax's existing test classes on two CPU processes, four devices each."""
 
 import os
+import inspect
 from pathlib import Path
 import socket
 import subprocess
@@ -15,12 +16,15 @@ def worker(rank, address, tempdir, test_args):
   from orbax.checkpoint._src.testing import multiprocess_test
 
   flags.FLAGS(['distributed_tests', f'--test_tmpdir={tempdir}'])
+  initialize_kwargs = {}
+  if 'heartbeat_timeout_seconds' in inspect.signature(jax.distributed.initialize).parameters:
+    initialize_kwargs['heartbeat_timeout_seconds'] = 90
   jax.distributed.initialize(
       coordinator_address=address,
       num_processes=2,
       process_id=rank,
       initialization_timeout=90,
-      heartbeat_timeout_seconds=90,
+      **initialize_kwargs,
   )
   print(f'Rank {rank}: {jax.devices()}', flush=True)
   try:

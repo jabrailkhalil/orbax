@@ -18,8 +18,16 @@ jobs:
         include:
           - python: '3.12'
             jax: '0.11.2'
+            revision: fixed
           - python: '3.11'
             jax: '0.6.0'
+            revision: fixed
+          - python: '3.12'
+            jax: '0.11.2'
+            revision: baseline
+          - python: '3.11'
+            jax: '0.6.0'
+            revision: baseline
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,18 +44,23 @@ jobs:
         env:
           TEST_LOGDIR: type-handler-logs
         run: |
-          python validation/run_distributed_tests.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py
+          if [[ '${{ matrix.revision }}' == 'baseline' ]]; then
+            git restore --source=bd56f161c9a57d903a58078797d29be99b4891d0 -- checkpoint
+          fi
+          cd checkpoint
+          python ../validation/run_distributed_tests.py orbax/checkpoint/_src/serialization/type_handlers_test.py
       - name: Run checkpoint-handler integration tests with two CPU processes
         if: always()
         env:
           TEST_LOGDIR: checkpoint-handler-logs
         run: |
-          python validation/run_distributed_tests.py checkpoint/orbax/checkpoint/_src/handlers/pytree_checkpoint_handler_test.py checkpoint/orbax/checkpoint/_src/handlers/array_checkpoint_handler_test.py checkpoint/orbax/checkpoint/_src/handlers/standard_checkpoint_handler_test.py
+          cd checkpoint
+          python ../validation/run_distributed_tests.py orbax/checkpoint/_src/handlers/pytree_checkpoint_handler_test.py orbax/checkpoint/_src/handlers/array_checkpoint_handler_test.py orbax/checkpoint/_src/handlers/standard_checkpoint_handler_test.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: distributed-logs-${{ matrix.jax }}
-          path: '*-logs'
+          name: distributed-logs-${{ matrix.jax }}-${{ matrix.revision }}
+          path: 'checkpoint/*-logs'
   checkpoint-suite:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -75,5 +88,10 @@ jobs:
           python-version: '3.12'
       - name: Run repository pre-commit hooks
         run: |
-          pip install pre-commit
+          pip install pre-commit pytype==2024.10.11
+          pre-commit run --files checkpoint/orbax/checkpoint/_src/serialization/jax_array_handlers.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py
+      - name: Run identical hooks on unmodified baseline
+        if: always()
+        run: |
+          git restore --source=bd56f161c9a57d903a58078797d29be99b4891d0 -- checkpoint
           pre-commit run --files checkpoint/orbax/checkpoint/_src/serialization/jax_array_handlers.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py
