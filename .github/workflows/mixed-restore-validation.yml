@@ -1,0 +1,32 @@
+name: Mixed restore validation
+
+on:
+  push:
+    branches:
+      - 'validation/mixed-single-replica-*'
+
+permissions:
+  contents: read
+
+jobs:
+  distributed-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install checkpoint test dependencies
+        run: |
+          pip install -e ./checkpoint 'jax==0.11.2' 'jaxlib==0.11.2' pytest pytest-xdist mock chex flax portpicker tensorboard
+      - name: Reproduce mixed restore regression with two CPU processes
+        env:
+          TEST_LOGDIR: baseline-logs
+        run: |
+          python validation/run_distributed_tests.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py -k test_mixed_restore_args
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: distributed-regression-logs
+          path: baseline-logs
