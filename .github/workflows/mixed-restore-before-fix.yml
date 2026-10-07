@@ -1,0 +1,42 @@
+name: Restore regression before fix
+on:
+  push:
+    branches: [validation/mixed-single-replica-oct7]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies and restore baseline handler
+        run: |
+          pip install -e ./checkpoint 'jax==0.11.2' 'jaxlib==0.11.2' pytest pytest-xdist mock chex flax portpicker tensorboard
+          git restore --source=db64a372cdf75be433c25308ddc5be2992d56fd9 -- checkpoint/orbax/checkpoint/_src/serialization/jax_array_handlers.py
+      - name: Verify that every final regression case fails on the baseline
+        run: |
+          cd checkpoint
+          if python ../validation/run_distributed_tests.py orbax/checkpoint/_src/serialization/type_handlers_test.py -k test_mixed_restore_args; then
+            exit 1
+          fi
+          python - <<'PY'
+          from pathlib import Path
+          for rank in range(2):
+              text = Path(f'distributed-test-logs/rank-{rank}.log').read_text()
+              assert '12 failed, 75 deselected' in text
+              failures = [line for line in text.splitlines() if line.startswith('FAILED ')]
+              assert len(failures) == 12
+              assert all('ValueError: Must provide `SingleReplicaArrayRestoreArgs`' in line for line in failures)
+              print(f'Rank {rank}: all 12 final cases fail with the original type rejection')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: final-regression-baseline-logs
+          path: checkpoint/distributed-test-logs

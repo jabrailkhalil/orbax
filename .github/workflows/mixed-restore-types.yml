@@ -1,0 +1,29 @@
+name: Restore type analysis
+on:
+  push:
+    branches: [validation/mixed-single-replica-oct7]
+permissions:
+  contents: read
+jobs:
+  pytype:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [fixed, baseline]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install repository-pinned type checker
+        run: pip install pytype==2024.10.11
+      - name: Analyze complete modules with the checkpoint import root
+        run: |
+          if [[ '${{ matrix.revision }}' == 'baseline' ]]; then
+            git restore --source=db64a372cdf75be433c25308ddc5be2992d56fd9 -- checkpoint
+          fi
+          pytype -P checkpoint -d import-error --keep-going -j 2 checkpoint/orbax/checkpoint/_src/serialization/jax_array_handlers.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py

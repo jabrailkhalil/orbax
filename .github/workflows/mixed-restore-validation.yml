@@ -1,0 +1,115 @@
+name: Mixed restore validation
+
+on:
+  push:
+    branches:
+      - 'validation/mixed-single-replica-*'
+
+permissions:
+  contents: read
+
+jobs:
+  distributed-suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.12'
+            jax: '0.11.2'
+            revision: fixed
+          - python: '3.11'
+            jax: '0.6.0'
+            revision: fixed
+          - python: '3.12'
+            jax: '0.11.2'
+            revision: baseline
+          - python: '3.11'
+            jax: '0.6.0'
+            revision: baseline
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install checkpoint test dependencies
+        run: |
+          if [[ '${{ matrix.jax }}' == '0.6.0' ]]; then
+            pip install -e ./checkpoint 'jax==0.6.0' 'jaxlib==0.6.0' 'flax==0.10.6' 'chex==0.1.89' 'optax==0.2.4' pytest pytest-xdist mock portpicker tensorboard
+          else
+            pip install -e ./checkpoint 'jax==${{ matrix.jax }}' 'jaxlib==${{ matrix.jax }}' pytest pytest-xdist mock chex flax portpicker tensorboard
+          fi
+      - name: Run mixed regression separately on the fixed implementation
+        if: matrix.revision == 'fixed'
+        env:
+          TEST_LOGDIR: mixed-regression-logs
+        run: |
+          cd checkpoint
+          python ../validation/run_distributed_tests.py orbax/checkpoint/_src/serialization/type_handlers_test.py -k test_mixed_restore_args
+      - name: Run all type-handler tests with two CPU processes
+        env:
+          TEST_LOGDIR: type-handler-logs
+        run: |
+          if [[ '${{ matrix.revision }}' == 'baseline' ]]; then
+            git restore --source=db64a372cdf75be433c25308ddc5be2992d56fd9 -- checkpoint
+          fi
+          cd checkpoint
+          python ../validation/run_distributed_tests.py orbax/checkpoint/_src/serialization/type_handlers_test.py
+      - name: Run checkpoint-handler integration tests with two CPU processes
+        if: always()
+        env:
+          TEST_LOGDIR: checkpoint-handler-logs
+        run: |
+          cd checkpoint
+          python ../validation/run_distributed_tests.py orbax/checkpoint/_src/handlers/pytree_checkpoint_handler_test.py orbax/checkpoint/_src/handlers/array_checkpoint_handler_test.py orbax/checkpoint/_src/handlers/standard_checkpoint_handler_test.py
+      - name: Confirm pre-existing integer broadcast behavior
+        if: always() && matrix.revision == 'baseline' && matrix.jax == '0.11.2'
+        env:
+          TEST_LOGDIR: integer-control-logs
+        run: |
+          cd checkpoint
+          python ../validation/run_distributed_tests.py ../validation/narrow_integer_control_test.py -k test_int32_broadcast_control
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: distributed-logs-${{ matrix.jax }}-${{ matrix.revision }}
+          path: 'checkpoint/*-logs'
+  checkpoint-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install checkpoint suite dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e './checkpoint[testing,tiering_service]' portpicker tensorboard 'jax==0.11.2' 'jaxlib==0.11.2'
+          cd checkpoint
+          python -m grpc_tools.protoc -I=. --python_out=. --grpc_python_out=. $(find orbax/checkpoint/ -name '*.proto')
+      - name: Run upstream single-host checkpoint suite
+        run: |
+          python validation/run_checkpoint_suite.py
+  style-and-types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run repository pre-commit hooks
+        run: |
+          pip install pre-commit pytype==2024.10.11
+          pre-commit run --files checkpoint/orbax/checkpoint/_src/serialization/jax_array_handlers.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py
+      - name: Run identical hooks on unmodified baseline
+        if: always()
+        run: |
+          git restore --source=db64a372cdf75be433c25308ddc5be2992d56fd9 -- checkpoint
+          pre-commit run --files checkpoint/orbax/checkpoint/_src/serialization/jax_array_handlers.py checkpoint/orbax/checkpoint/_src/serialization/type_handlers_test.py
