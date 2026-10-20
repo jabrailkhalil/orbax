@@ -1,0 +1,72 @@
+name: Author mixed restore October 20
+on:
+  push:
+    branches: [validation/mixed-single-replica-oct20]
+permissions:
+  contents: read
+jobs:
+  distributed:
+    name: Distributed ${{ matrix.source }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [head, base]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select pinned source and verify identity
+        run: |
+          git diff --exit-code f24a56f8bd4bcb8592e847df1bc7342e828c15bd -- checkpoint
+          if [ '${{ matrix.source }}' = base ]; then
+            git restore --source=30f564d6da57b85d234a23a12e0470052afd255f -- checkpoint
+          fi
+          git diff --exit-code ${{ matrix.source == 'base' && '30f564d6da57b85d234a23a12e0470052afd255f' || 'f24a56f8bd4bcb8592e847df1bc7342e828c15bd' }} -- checkpoint
+      - name: Install exact JAX runtime
+        run: pip install -e ./checkpoint jax==0.11.2 jaxlib==0.11.2 pytest pytest-xdist mock chex flax portpicker tensorboard
+      - name: Mixed regressions on head
+        if: matrix.source == 'head'
+        working-directory: checkpoint
+        env:
+          TEST_LOGDIR: mixed-regression-logs
+        run: python ../validation/run_distributed_tests.py orbax/checkpoint/_src/serialization/type_handlers_test.py -k test_mixed_restore_args
+      - name: Full two-rank type handler suite
+        working-directory: checkpoint
+        env:
+          TEST_LOGDIR: type-handler-logs
+        run: python ../validation/run_distributed_tests.py orbax/checkpoint/_src/serialization/type_handlers_test.py
+      - name: Full two-rank checkpoint handler integration
+        working-directory: checkpoint
+        env:
+          TEST_LOGDIR: checkpoint-handler-logs
+        run: python ../validation/run_distributed_tests.py orbax/checkpoint/_src/handlers/pytree_checkpoint_handler_test.py orbax/checkpoint/_src/handlers/array_checkpoint_handler_test.py orbax/checkpoint/_src/handlers/standard_checkpoint_handler_test.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: restore-${{ matrix.source }}
+          path: checkpoint/*-logs
+  checkpoint-suite:
+    name: Complete single-host checkpoint suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: git diff --exit-code f24a56f8bd4bcb8592e847df1bc7342e828c15bd -- checkpoint
+      - name: Install suite dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e './checkpoint[testing,tiering_service]' portpicker tensorboard jax==0.11.2 jaxlib==0.11.2
+          cd checkpoint
+          python -m grpc_tools.protoc -I=. --python_out=. --grpc_python_out=. $(find orbax/checkpoint/ -name '*.proto')
+      - name: Unmodified upstream single-host selection
+        run: python validation/run_checkpoint_suite.py
